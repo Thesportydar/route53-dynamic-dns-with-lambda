@@ -100,16 +100,17 @@ class DyndnsStack(cdk.Stack):
         if ddns_domain:
             # Validate domain format (must have at least subdomain.domain.tld)
             domain_parts = ddns_domain.split(".")
-            if len(domain_parts) < 2:
+            if len(domain_parts) < 3:
                 raise ValueError(
                     f"Invalid ddns_domain format: {ddns_domain}. "
-                    "Must be in format subdomain.domain.tld (e.g., ddns.example.com)"
+                    "Must be in format subdomain.domain.tld (e.g., ddns.example.com) "
+                    "with at least 3 parts."
                 )
             
             # Extract base domain (last two parts: domain.tld)
             base_domain = ".".join(domain_parts[-2:])
             # Extract subdomain (all parts except last two)
-            subdomain = ".".join(domain_parts[:-2]) if len(domain_parts) > 2 else domain_parts[0]
+            subdomain = ".".join(domain_parts[:-2])
             
             # Lookup the hosted zone
             try:

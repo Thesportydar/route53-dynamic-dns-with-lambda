@@ -67,9 +67,7 @@ This configures CloudFront with your custom domain and automatically:
 - HTTP: `http://ddns.yourdomain.com/nic/update`
 - HTTPS: `https://ddns.yourdomain.com/nic/update`
 
-### Deployment Instructions
-
-### Deployment Instructions
+## Deployment Instructions
 
 To deploy the CDK stack to an AWS account is suggested to use a CloudShell session: 
 https://docs.aws.amazon.com/cloudshell/latest/userguide/welcome.html
