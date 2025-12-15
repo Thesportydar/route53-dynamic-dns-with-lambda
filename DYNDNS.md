@@ -4,25 +4,49 @@
 
 This serverless dynamic DNS solution supports the standard DynDNS protocol, making it compatible with a wide range of routers and network devices. You can configure your router to automatically update your DNS records without needing to run scripts or scheduled tasks.
 
+### CloudFront Distribution for HTTP Support
+
+The solution includes a **CloudFront distribution** that provides:
+- **HTTP port 80 support** for legacy routers that don't support HTTPS
+- **HTTPS port 443** for modern devices (recommended)
+- Secure communication to the Lambda backend (always HTTPS)
+- No caching (ensures real-time DDNS updates work correctly)
+
+**Why CloudFront?** Lambda Function URLs only support HTTPS (port 443), but many legacy routers and DDNS clients can only use HTTP on port 80. CloudFront solves this by accepting HTTP/HTTPS from clients while maintaining secure HTTPS communication with Lambda.
+
+**Getting Your CloudFront Domain:**
+After deploying the stack with `cdk deploy`, check the CloudFormation outputs:
+```bash
+aws cloudformation describe-stacks --stack-name DyndnsStack --query 'Stacks[0].Outputs'
+```
+
+You'll see either:
+- `CloudFrontDomain`: Generic CloudFront domain (e.g., `d1234abcd5678.cloudfront.net`)
+- `CustomDomain`: Your custom domain if deployed with `-c ddns_domain=ddns.example.com`
+
 ## How It Works
 
 The DynDNS protocol is a simple HTTP-based protocol that allows devices to update DNS records by making a GET request to a specific endpoint with HTTP Basic Authentication. When your router detects an IP address change, it automatically sends an update request to the Lambda function, which updates your Route53 DNS record.
 
 ## General Configuration Parameters
 
-Regardless of which device you're using, you'll need these values:
+Regardless of which device you're using, you'll need these values (obtained from CDK stack outputs after deployment):
 
 | Parameter | Value | Example |
 |-----------|-------|---------|
 | **Service/Provider** | Custom or DynDNS | Custom |
-| **Server/Hostname** | Your Lambda URL (without https://) | `xyz123.lambda-url.us-east-1.on.aws` |
-| **Protocol** | HTTPS | HTTPS |
-| **Port** | 443 | 443 |
+| **Server/Hostname** | CloudFront domain from stack outputs | `d1234abcd5678.cloudfront.net` or `ddns.example.com` |
+| **Protocol** | HTTPS (modern) or HTTP (legacy) | HTTPS or HTTP |
+| **Port** | 443 (HTTPS) or 80 (HTTP) | 443 or 80 |
 | **Path/URI** | `/nic/update` | `/nic/update` |
 | **Username** | Your hostname | `home.example.com` |
 | **Password** | Your shared secret | `SHARED_SECRET_123` |
 
-**Note**: Your Lambda URL is provided by the `newrecord.py` script after configuration. It looks like: `https://xyz123.lambda-url.us-east-1.on.aws/`
+**Important Notes:**
+- **Always use the CloudFront domain** from the stack outputs (either the generic CloudFront domain or your custom domain if configured)
+- **For legacy routers that only support HTTP**: Use `http://` and port `80`
+- **For modern routers with HTTPS support**: Use `https://` and port `443` (recommended)
+- CloudFront enables both HTTP and HTTPS access while maintaining secure HTTPS communication with the Lambda backend
 
 ## Device-Specific Configuration Guides
 
@@ -36,10 +60,11 @@ Regardless of which device you're using, you'll need these values:
    - **Domain Name**: Enter your hostname (e.g., `home.example.com`)
    - **Username**: Enter your hostname (e.g., `home.example.com`)
    - **Password**: Enter your shared secret
-   - **Server Address** (if available): Enter your Lambda URL without https:// (e.g., `xyz123.lambda-url.us-east-1.on.aws/nic/update`)
+   - **Server Address** (if available): Enter your CloudFront domain (e.g., `d1234abcd5678.cloudfront.net/nic/update`)
+   - **Port**: 80 (HTTP) or 443 (HTTPS) depending on router support
 5. Click **Save** and then **Login** or **Connect**
 
-**Note**: Some TP-Link models only support specific providers. If "Custom" is not available, you may need to use the dyndns.sh script instead.
+**Note**: Some TP-Link models only support HTTP on port 80. If "Custom" is not available, you may need to use the dyndns.sh script instead.
 
 ### ASUS Routers (Including Merlin Firmware)
 
@@ -51,11 +76,11 @@ Regardless of which device you're using, you'll need these values:
    - **Hostname**: Enter your hostname (e.g., `home.example.com`)
    - **Username**: Enter your hostname (e.g., `home.example.com`)
    - **Password**: Enter your shared secret
-   - **Server Address** (if available): Enter the full URL: `https://xyz123.lambda-url.us-east-1.on.aws/nic/update?hostname=home.example.com&myip=`
+   - **Server Address** (if available): Enter the full URL with your CloudFront domain: `https://d1234abcd5678.cloudfront.net/nic/update?hostname=home.example.com&myip=` (or use HTTP if HTTPS not supported)
 4. Click **Apply**
 
 **For Merlin Firmware**, you can use the Custom DDNS with the following settings:
-- **Server**: `xyz123.lambda-url.us-east-1.on.aws`
+- **Server**: Your CloudFront domain (e.g., `d1234abcd5678.cloudfront.net`)
 - **Query Path**: `/nic/update?hostname=@HOST@&myip=@IP@`
 
 ### Netgear Routers
@@ -84,7 +109,7 @@ Regardless of which device you're using, you'll need these values:
    - **Verbose logging**: Check if you want detailed logs
    - **Username**: Enter your hostname (e.g., `home.example.com`)
    - **Password**: Enter your shared secret
-   - **Server**: Enter your Lambda URL without https:// (e.g., `xyz123.lambda-url.us-east-1.on.aws`)
+   - **Server**: Enter your CloudFront domain (e.g., `d1234abcd5678.cloudfront.net`)
    - **Update URL**: `/nic/update?hostname=%h&myip=%i`
 5. Click **Save**
 
@@ -101,7 +126,7 @@ The %h will be replaced with your hostname and %i with your IP address.
    - **Hostname**: Enter your hostname (e.g., `home.example.com`)
    - **Username**: Enter your hostname (e.g., `home.example.com`)
    - **Password**: Enter your shared secret
-   - **Server**: Enter your Lambda URL without https:// (e.g., `xyz123.lambda-url.us-east-1.on.aws`)
+   - **Server**: Enter your CloudFront domain (e.g., `d1234abcd5678.cloudfront.net`)
    - **Update URL**: `/nic/update?hostname=%h&myip=%i`
 5. Check **Enable**
 6. Click **Save**
@@ -118,12 +143,12 @@ MikroTik RouterOS supports custom DDNS through its scripting feature:
 :local username "home.example.com"
 :local password "SHARED_SECRET_123"
 :local hostname "home.example.com"
-:local lambdaurl "xyz123.lambda-url.us-east-1.on.aws"
+:local cloudfrontdomain "d1234abcd5678.cloudfront.net"
 
 :local ipaddr [/ip address get [find interface="ether1"] address]
 :set ipaddr [:pick $ipaddr 0 [:find $ipaddr "/"]]
 
-/tool fetch mode=https url="https://$lambdaurl/nic/update?hostname=$hostname&myip=$ipaddr" http-method=get user=$username password=$password dst-path=dyndns-result.txt
+/tool fetch mode=https url="https://$cloudfrontdomain/nic/update?hostname=$hostname&myip=$ipaddr" http-method=get user=$username password=$password dst-path=dyndns-result.txt
 
 :log info "DDNS update completed for $hostname with IP $ipaddr"
 ```
@@ -132,7 +157,7 @@ MikroTik RouterOS supports custom DDNS through its scripting feature:
    - `username`: Your hostname
    - `password`: Your shared secret
    - `hostname`: Your hostname
-   - `lambdaurl`: Your Lambda URL (without https://)
+   - `cloudfrontdomain`: Your CloudFront domain from stack outputs
    - `interface="ether1"`: Your WAN interface name
 
 5. Save the script with a name like "ddns-update"
@@ -153,10 +178,12 @@ MikroTik RouterOS supports custom DDNS through its scripting feature:
    - **Hostname**: Enter your hostname (e.g., `home.example.com`)
    - **Username**: Enter your hostname (e.g., `home.example.com`)
    - **Password**: Enter your shared secret
-   - **URL**: `https://xyz123.lambda-url.us-east-1.on.aws/nic/update?hostname=@HOST@&myip=@IP@`
+   - **URL**: `https://d1234abcd5678.cloudfront.net/nic/update?hostname=@HOST@&myip=@IP@` (replace with your CloudFront domain)
 4. Click **Save** and then **Apply Settings**
 
 The @HOST@ and @IP@ placeholders will be automatically replaced by DD-WRT.
+
+**Note**: If your DD-WRT version doesn't support HTTPS, use `http://` instead.
 
 ### OpenWrt
 
@@ -179,7 +206,7 @@ OpenWrt uses the `ddns-scripts` package for dynamic DNS updates:
    - **Password**: Enter your shared secret
    
 6. Switch to the **Advanced Settings** tab:
-   - **Update URL**: `https://xyz123.lambda-url.us-east-1.on.aws/nic/update?hostname=[DOMAIN]&myip=[IP]`
+   - **Update URL**: `https://d1234abcd5678.cloudfront.net/nic/update?hostname=[DOMAIN]&myip=[IP]` (replace with your CloudFront domain)
    - **Optional Encoded Parameters**: Leave empty
    - **Use HTTP Secure**: Checked
 
@@ -194,7 +221,7 @@ vi /etc/config/ddns
 Add a new section:
 
 ```
-config service 'aws_lambda_ddns'
+config service 'aws_cloudfront_ddns'
     option enabled '1'
     option service_name 'custom'
     option use_https '1'
@@ -202,12 +229,14 @@ config service 'aws_lambda_ddns'
     option domain 'home.example.com'
     option username 'home.example.com'
     option password 'SHARED_SECRET_123'
-    option update_url 'https://xyz123.lambda-url.us-east-1.on.aws/nic/update?hostname=[DOMAIN]&myip=[IP]'
+    option update_url 'https://d1234abcd5678.cloudfront.net/nic/update?hostname=[DOMAIN]&myip=[IP]'
     option ip_source 'web'
     option ip_url 'https://api.ipify.org'
     option check_interval '10'
     option check_unit 'minutes'
 ```
+
+Replace `d1234abcd5678.cloudfront.net` with your actual CloudFront domain from the stack outputs.
 
 Then restart the DDNS service:
 ```bash
@@ -238,15 +267,17 @@ vi /config/scripts/post-config.d/update-ddns.sh
 
 HOSTNAME="home.example.com"
 SECRET="SHARED_SECRET_123"
-LAMBDA_URL="xyz123.lambda-url.us-east-1.on.aws"
+CLOUDFRONT_DOMAIN="d1234abcd5678.cloudfront.net"
 
 # Get current WAN IP
 WAN_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 
 # Update DDNS using curl
 curl -s -u "${HOSTNAME}:${SECRET}" \
-  "https://${LAMBDA_URL}/nic/update?hostname=${HOSTNAME}&myip=${WAN_IP}"
+  "https://${CLOUDFRONT_DOMAIN}/nic/update?hostname=${HOSTNAME}&myip=${WAN_IP}"
 ```
+
+Replace `d1234abcd5678.cloudfront.net` with your actual CloudFront domain from the stack outputs.
 
 4. Make the script executable:
 ```bash
@@ -273,10 +304,22 @@ Before configuring your router, test the endpoint manually to ensure it's workin
 
 ### Using curl
 
-Replace the values with your actual configuration:
+First, get your CloudFront domain from the stack outputs:
 
 ```bash
-curl -v "https://YOUR-LAMBDA-URL.lambda-url.region.on.aws/nic/update?hostname=home.example.com&myip=1.2.3.4" \
+CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name DyndnsStack --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomain`].OutputValue' --output text)
+echo "CloudFront Domain: $CLOUDFRONT_DOMAIN"
+```
+
+Then test both HTTP and HTTPS:
+
+```bash
+# Test with HTTPS (port 443) - recommended
+curl -v "https://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com&myip=1.2.3.4" \
+  -u "home.example.com:SHARED_SECRET_123"
+
+# Test with HTTP (port 80) - for legacy routers
+curl -v "http://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com&myip=1.2.3.4" \
   -u "home.example.com:SHARED_SECRET_123"
 ```
 
@@ -296,21 +339,21 @@ curl -v "https://YOUR-LAMBDA-URL.lambda-url.region.on.aws/nic/update?hostname=ho
 
 First request (sets IP):
 ```bash
-curl "https://YOUR-LAMBDA-URL.lambda-url.region.on.aws/nic/update?hostname=home.example.com&myip=1.2.3.4" \
+curl "https://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com&myip=1.2.3.4" \
   -u "home.example.com:SHARED_SECRET_123"
 ```
 Response: `good 1.2.3.4`
 
 Second request (same IP):
 ```bash
-curl "https://YOUR-LAMBDA-URL.lambda-url.region.on.aws/nic/update?hostname=home.example.com&myip=1.2.3.4" \
+curl "https://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com&myip=1.2.3.4" \
   -u "home.example.com:SHARED_SECRET_123"
 ```
 Response: `nochg 1.2.3.4`
 
 Third request (different IP):
 ```bash
-curl "https://YOUR-LAMBDA-URL.lambda-url.region.on.aws/nic/update?hostname=home.example.com&myip=5.6.7.8" \
+curl "https://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com&myip=5.6.7.8" \
   -u "home.example.com:SHARED_SECRET_123"
 ```
 Response: `good 5.6.7.8`
@@ -318,7 +361,7 @@ Response: `good 5.6.7.8`
 ### Testing Without Specifying IP (Uses Source IP)
 
 ```bash
-curl "https://YOUR-LAMBDA-URL.lambda-url.region.on.aws/nic/update?hostname=home.example.com" \
+curl "https://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com" \
   -u "home.example.com:SHARED_SECRET_123"
 ```
 

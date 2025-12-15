@@ -11,12 +11,63 @@ CDK will manage the deployment of the following resources:
 - Lambda Function
 - DynamoDB Table
 - Lambda Function IAM Role
+- **CloudFront Distribution** (for HTTP port 80 support)
+- **Optional**: ACM Certificate and Route53 Alias (when using custom domain)
 
 The Lambda function will be configured with a FunctionURL for PUBLIC invocation.
 The Lambda IAM Role will have the following permissions in addition to the standard Lambda role:
 
 - READ (all actions) for the deployed DynamoDB Table
 - Route53 List and Change record set
+
+## CloudFront Distribution for HTTP Port 80 Support
+
+This solution includes a CloudFront distribution to enable **HTTP port 80** support for legacy routers and DDNS clients that don't support HTTPS. Many older routers (like Huawei HG8245U) and some DDNS clients can only use HTTP on port 80.
+
+### How It Works
+
+- **Client → CloudFront**: HTTP (port 80) or HTTPS (port 443)
+- **CloudFront → Lambda**: HTTPS only (secure internal communication)
+- **Caching**: Disabled (critical for DDNS to work correctly with real-time IP updates)
+
+### Deployment Options
+
+You can deploy the stack in two ways:
+
+#### 1. Default Deployment (CloudFront Generic Domain)
+
+```bash
+cdk deploy
+```
+
+This creates a CloudFront distribution with a generic AWS domain like `d1234abcd5678.cloudfront.net`.
+
+**Use this domain for your DDNS updates:**
+- HTTP: `http://d1234abcd5678.cloudfront.net/nic/update`
+- HTTPS: `https://d1234abcd5678.cloudfront.net/nic/update`
+
+#### 2. Custom Domain Deployment (Optional)
+
+```bash
+cdk deploy -c ddns_domain=ddns.yourdomain.com
+```
+
+This configures CloudFront with your custom domain and automatically:
+1. Looks up the Route53 hosted zone for `yourdomain.com`
+2. Creates or finds an ACM wildcard certificate (`*.yourdomain.com`) in `us-east-1`
+3. Configures CloudFront with the custom domain and certificate
+4. Creates a Route53 A record (alias) pointing to the CloudFront distribution
+
+**Requirements for custom domain:**
+- Hosted zone for `yourdomain.com` must already exist in Route53
+- The stack will automatically create an ACM certificate in `us-east-1` if one doesn't exist
+- Certificate validation happens via DNS (automatic with Route53)
+
+**Use your custom domain for DDNS updates:**
+- HTTP: `http://ddns.yourdomain.com/nic/update`
+- HTTPS: `https://ddns.yourdomain.com/nic/update`
+
+## Deployment Instructions
 
 To deploy the CDK stack to an AWS account is suggested to use a CloudShell session: 
 https://docs.aws.amazon.com/cloudshell/latest/userguide/welcome.html
@@ -42,11 +93,23 @@ https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html
 If you get an error about CDK CLI not being up to date run the following:
 > `sudo npm install -g aws-cdk`
 
-> Then retry `ckd bootstrap`
+> Then retry `cdk bootstrap`
 
-Deploy the stack
+Deploy the stack (choose one option):
 
-> `cdk deploy`
+**Option 1: Deploy with CloudFront generic domain (default)**
+```bash
+cdk deploy
+```
+
+**Option 2: Deploy with custom domain**
+```bash
+cdk deploy -c ddns_domain=ddns.yourdomain.com
+```
+
+After deployment completes, the stack outputs will show:
+- `CloudFrontDomain` (or `CustomDomain` if using custom domain)
+- `DdnsUpdateUrl` - The complete URL for DDNS updates
 
 ## Configuration
 
@@ -163,16 +226,59 @@ More information on how to invoke the Lambda URL can be found here: [invocation.
 
 This solution supports the standard DynDNS protocol, allowing direct integration with routers and network devices.
 
+**Important: Use the CloudFront domain** (or custom domain) from the stack outputs, not the Lambda URL directly. CloudFront enables HTTP port 80 support for legacy devices.
+
 ### Quick Setup
 
 After running `newrecord.py`, configure your router's Dynamic DNS settings:
 
+#### For Modern Routers (HTTPS Support)
+
 - **Service/Provider**: Custom or DynDNS
-- **Server/Hostname**: `your-lambda-url.lambda-url.region.on.aws` (without https://)
+- **Server/Hostname**: CloudFront domain from stack outputs (e.g., `d1234abcd5678.cloudfront.net` or `ddns.yourdomain.com`)
 - **Protocol**: HTTPS
+- **Port**: 443
 - **Path/URI**: `/nic/update`
 - **Username**: Your full hostname (e.g., `home.example.com`)
 - **Password**: Your shared secret
+
+#### For Legacy Routers (HTTP Only)
+
+Many legacy routers only support HTTP on port 80:
+
+- **Service/Provider**: Custom or DynDNS
+- **Server/Hostname**: CloudFront domain from stack outputs (e.g., `d1234abcd5678.cloudfront.net` or `ddns.yourdomain.com`)
+- **Protocol**: HTTP
+- **Port**: 80
+- **Path/URI**: `/nic/update`
+- **Username**: Your full hostname (e.g., `home.example.com`)
+- **Password**: Your shared secret
+
+**Example legacy routers that require HTTP:**
+- Huawei HG8245U
+- Older TP-Link models
+- Some ISP-provided routers
+
+### Testing Your Configuration
+
+Test with curl to verify both HTTP and HTTPS work:
+
+```bash
+# Get the CloudFront domain from stack outputs
+CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name DyndnsStack --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomain`].OutputValue' --output text)
+
+# Test HTTP (port 80) - for legacy routers
+curl -v "http://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com" \
+  -u "home.example.com:SHARED_SECRET_123"
+
+# Test HTTPS (port 443) - for modern routers
+curl -v "https://$CLOUDFRONT_DOMAIN/nic/update?hostname=home.example.com" \
+  -u "home.example.com:SHARED_SECRET_123"
+
+# Expected responses:
+# - good <ip-address>  (IP was updated)
+# - nochg <ip-address> (IP unchanged)
+```
 
 ### Supported Devices
 
