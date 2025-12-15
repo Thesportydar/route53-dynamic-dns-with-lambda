@@ -8,7 +8,51 @@ import re
 import hashlib
 import boto3
 import os
+import base64
 from botocore.exceptions import ClientError
+
+'''
+Parse HTTP Basic Authentication header.
+Returns tuple of (username, password) or (None, None) if not valid.
+'''
+def parse_basic_auth(auth_header):
+    if not auth_header:
+        return None, None
+    
+    # Check if it starts with "Basic "
+    if not auth_header.startswith('Basic '):
+        return None, None
+    
+    try:
+        # Extract and decode base64 credentials
+        encoded_credentials = auth_header[6:]  # Remove "Basic " prefix
+        decoded_credentials = base64.b64decode(encoded_credentials).decode('utf-8')
+        
+        # Split username:password
+        if ':' in decoded_credentials:
+            username, password = decoded_credentials.split(':', 1)
+            return username, password
+        else:
+            return None, None
+    except Exception:
+        return None, None
+
+
+'''
+Validate hostname format (FQDN).
+Pattern explanation:
+- ^[a-zA-Z0-9]: Must start with alphanumeric
+- ([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?: Optional middle part (up to 61 chars, can include hyphens)
+- (\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$: One or more domain labels separated by dots
+This ensures valid DNS hostname format per RFC 1123.
+'''
+def is_valid_hostname(hostname):
+    if not hostname or len(hostname) > 255:
+        return False
+    # FQDN validation - contains at least one dot and valid characters
+    pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$'
+    return bool(re.match(pattern, hostname))
+
 
 '''
 This function pulls the json config data from DynamoDB and returns a python dictionary.
@@ -179,11 +223,155 @@ def run_set_mode(ddns_hostname, validation_hash, source_ip):
 
 
 '''
+Handle DynDNS protocol endpoint (/nic/update).
+Returns DynDNS standard response format.
+'''
+def handle_dyndns_update(event):
+    # Extract query parameters
+    query_params = event.get('queryStringParameters', {}) or {}
+    hostname = query_params.get('hostname', '')
+    myip = query_params.get('myip', '')
+    
+    # If myip not provided, use source IP
+    if not myip:
+        myip = event['requestContext']['http']['sourceIp']
+    
+    # Validate hostname format
+    if not hostname:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': 'notfqdn'
+        }
+    
+    if not is_valid_hostname(hostname):
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': 'notfqdn'
+        }
+    
+    # Parse Basic Authentication
+    headers = event.get('headers', {})
+    # Check both lowercase and uppercase as different clients may send either format
+    # AWS Lambda Function URLs normalize headers to lowercase, but checking both for robustness
+    auth_header = headers.get('authorization') or headers.get('Authorization')
+    username, password = parse_basic_auth(auth_header)
+    
+    # Validate authentication
+    if not username or not password:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': 'badauth'
+        }
+    
+    # Username should match hostname
+    if username != hostname:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': 'badauth'
+        }
+    
+    # Try to read the config from DynamoDB
+    try:
+        full_config = read_config(hostname)
+    except Exception:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': 'nohost'
+        }
+    
+    # Verify password matches shared_secret
+    shared_secret = full_config.get('shared_secret', '')
+    if password != shared_secret:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': 'badauth'
+        }
+    
+    # Get Route53 configuration
+    route_53_zone_id = full_config['route_53_zone_id']
+    route_53_record_ttl = full_config['route_53_record_ttl']
+    route_53_record_type = "A"
+    
+    # Get current IP from Route53
+    try:
+        route53_get_response = route53_client(
+            'get_record',
+            route_53_zone_id,
+            hostname,
+            route_53_record_ttl,
+            route_53_record_type,
+            ''
+        )
+        
+        if route53_get_response['return_status'] == "fail":
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': '911'
+            }
+        
+        route53_ip = route53_get_response['return_message']
+        
+        # Check if IP has changed
+        if route53_ip == myip:
+            # IP hasn't changed
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': f'nochg {myip}'
+            }
+        else:
+            # IP has changed, update Route53
+            update_result = route53_client(
+                'set_record',
+                route_53_zone_id,
+                hostname,
+                route_53_record_ttl,
+                route_53_record_type,
+                myip
+            )
+            
+            if update_result[0] == 201:
+                return {
+                    'statusCode': 200,
+                    'headers': {'Content-Type': 'text/plain'},
+                    'body': f'good {myip}'
+                }
+            else:
+                return {
+                    'statusCode': 200,
+                    'headers': {'Content-Type': 'text/plain'},
+                    'body': '911'
+                }
+    except Exception:
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain'},
+            'body': '911'
+        }
+
+
+'''
 The function that Lambda executes. It contains the main script logic.
 '''
 
 
 def lambda_handler(event, context):
+    # Check if this is a DynDNS protocol request (GET /nic/update)
+    raw_path = event.get('rawPath', '/')
+    http_method = event.get('requestContext', {}).get('http', {}).get('method', 'POST')
+    
+    # Handle DynDNS protocol endpoint
+    if raw_path == '/nic/update' and http_method == 'GET':
+        return handle_dyndns_update(event)
+    
+    # Handle existing hash-based authentication endpoint
     # Get execution mode and source IP
     execution_mode = json.loads(event['body'])['execution_mode']
     source_ip = event['requestContext']['http']['sourceIp']

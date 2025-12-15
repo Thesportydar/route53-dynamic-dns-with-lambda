@@ -129,10 +129,17 @@ if confirm == 'y':
         print('# The Serverless Dynamic DNS solution is now ready. #')
         print('#                                                   #')
         print('#####################################################')
-        print(
-            '\n'+hostname+' can be updated with the following command:')
+        print('\nOPTION 1 - Use the provided script:')
         print("./dyndns.sh -m set -u "+lambdaurl +
               " -h "+hostname+" -s "+secret)
+        print('\nOPTION 2 - Configure your router with DynDNS protocol:')
+        print('Service: Custom')
+        print('Server: '+lambdaurl.replace('https://', '').rstrip('/'))
+        print('Protocol: HTTPS')
+        print('Path: /nic/update')
+        print('Username: '+hostname)
+        print('Password: '+secret)
+        print('\nFor detailed router configuration instructions, see DYNDNS.md')
         print('\n##########################################################################################\n')
     except:
         print("Could not save configuration.")
