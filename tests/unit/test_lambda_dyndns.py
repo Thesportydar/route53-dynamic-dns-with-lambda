@@ -124,9 +124,10 @@ class TestDynDNSProtocol(unittest.TestCase):
         }
         
         # Mock Route53 responses - old IP different from new IP
+        # Note: route53_client returns dict for get_record, list for set_record
         mock_route53.side_effect = [
-            {'return_status': 'success', 'return_message': '1.2.3.4'},  # get_record
-            [201, {'return_status': 'success', 'return_message': 'Updated'}]  # set_record
+            {'return_status': 'success', 'return_message': '1.2.3.4'},  # get_record returns dict
+            [201, {'return_status': 'success', 'return_message': 'Updated'}]  # set_record returns [status_code, dict]
         ]
         
         # Create test event
@@ -430,9 +431,10 @@ class TestDynDNSProtocol(unittest.TestCase):
         }
         
         # Mock Route53 responses - get succeeds, set fails
+        # Note: route53_client returns dict for get_record, list for set_record
         mock_route53.side_effect = [
-            {'return_status': 'success', 'return_message': '1.2.3.4'},  # get_record
-            [500, {'return_status': 'fail', 'return_message': 'Error'}]  # set_record fails
+            {'return_status': 'success', 'return_message': '1.2.3.4'},  # get_record returns dict
+            [500, {'return_status': 'fail', 'return_message': 'Error'}]  # set_record returns [status_code, dict]
         ]
         
         credentials = "home.example.com:SECRET123"

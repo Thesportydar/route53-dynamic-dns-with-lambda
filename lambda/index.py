@@ -40,11 +40,16 @@ def parse_basic_auth(auth_header):
 
 '''
 Validate hostname format (FQDN).
+Pattern explanation:
+- ^[a-zA-Z0-9]: Must start with alphanumeric
+- ([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?: Optional middle part (up to 61 chars, can include hyphens)
+- (\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$: One or more domain labels separated by dots
+This ensures valid DNS hostname format per RFC 1123.
 '''
 def is_valid_hostname(hostname):
     if not hostname or len(hostname) > 255:
         return False
-    # Simple FQDN validation - contains at least one dot and valid characters
+    # FQDN validation - contains at least one dot and valid characters
     pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$'
     return bool(re.match(pattern, hostname))
 
@@ -248,6 +253,8 @@ def handle_dyndns_update(event):
     
     # Parse Basic Authentication
     headers = event.get('headers', {})
+    # Check both lowercase and uppercase as different clients may send either format
+    # AWS Lambda Function URLs normalize headers to lowercase, but checking both for robustness
     auth_header = headers.get('authorization') or headers.get('Authorization')
     username, password = parse_basic_auth(auth_header)
     
