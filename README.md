@@ -158,3 +158,29 @@ _newrecord.py_ provides all the flags to successfully run the script:
 ```
 
 More information on how to invoke the Lambda URL can be found here: [invocation.md](invocation.md)
+
+## Router and Device Configuration (DynDNS Protocol)
+
+This solution supports the standard DynDNS protocol, allowing direct integration with routers and network devices.
+
+### Quick Setup
+
+After running `newrecord.py`, configure your router's Dynamic DNS settings:
+
+- **Service/Provider**: Custom or DynDNS
+- **Server/Hostname**: `your-lambda-url.lambda-url.region.on.aws` (without https://)
+- **Protocol**: HTTPS
+- **Path/URI**: `/nic/update`
+- **Username**: Your full hostname (e.g., `home.example.com`)
+- **Password**: Your shared secret
+
+### Supported Devices
+
+This solution works with any device supporting the DynDNS protocol:
+- Consumer routers (TP-Link, ASUS, Netgear, etc.)
+- pfSense, OPNsense
+- MikroTik RouterOS
+- DD-WRT, OpenWrt
+- UniFi Security Gateway
+
+For detailed configuration guides for specific devices, see [DYNDNS.md](DYNDNS.md)
