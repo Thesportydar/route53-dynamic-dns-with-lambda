@@ -55,6 +55,28 @@ def is_valid_hostname(hostname):
 
 
 '''
+Extract source IP from event, prioritizing X-Forwarded-For header.
+When requests come through CloudFront or other proxies, the X-Forwarded-For header
+contains the real client IP. The first IP in the comma-separated list is the client IP.
+Falls back to sourceIp from requestContext for direct Lambda URL access.
+'''
+def get_source_ip(event):
+    # Check for X-Forwarded-For header (CloudFront/proxy use case)
+    headers = event.get('headers', {})
+    # Check both lowercase and uppercase variants
+    x_forwarded_for = headers.get('x-forwarded-for') or headers.get('X-Forwarded-For')
+    
+    if x_forwarded_for:
+        # X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
+        # The first IP is the original client IP
+        client_ip = x_forwarded_for.split(',')[0].strip()
+        return client_ip
+    
+    # Fallback to sourceIp from requestContext (direct Lambda URL access)
+    return event.get('requestContext', {}).get('http', {}).get('sourceIp', '')
+
+
+'''
 This function pulls the json config data from DynamoDB and returns a python dictionary.
 It is called by the run_set_mode function.
 '''
@@ -232,9 +254,9 @@ def handle_dyndns_update(event):
     hostname = query_params.get('hostname', '')
     myip = query_params.get('myip', '')
     
-    # If myip not provided, use source IP
+    # If myip not provided, use source IP (with X-Forwarded-For support)
     if not myip:
-        myip = event['requestContext']['http']['sourceIp']
+        myip = get_source_ip(event)
     
     # Validate hostname format
     if not hostname:
@@ -374,7 +396,7 @@ def lambda_handler(event, context):
     # Handle existing hash-based authentication endpoint
     # Get execution mode and source IP
     execution_mode = json.loads(event['body'])['execution_mode']
-    source_ip = event['requestContext']['http']['sourceIp']
+    source_ip = get_source_ip(event)
 
     # Verify that the execution mode was set correctly.
     execution_modes = ('set', 'get')

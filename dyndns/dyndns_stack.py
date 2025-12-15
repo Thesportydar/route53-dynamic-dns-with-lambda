@@ -15,7 +15,8 @@ class DyndnsStack(cdk.Stack):
         table = dynamodb.Table(self, "dyndns_db",
             partition_key=dynamodb.Attribute(name="hostname", type=dynamodb.AttributeType.STRING),
             removal_policy=cdk.RemovalPolicy.DESTROY,
-            point_in_time_recovery=True                   
+            point_in_time_recovery=True,
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
         )
         
         #Create Lambda role

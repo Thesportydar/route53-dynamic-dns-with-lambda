@@ -236,6 +236,47 @@ class TestDynDNSProtocol(unittest.TestCase):
             self.assertEqual(response['statusCode'], 200)
             self.assertEqual(response['body'], 'nochg 9.9.9.9')
     
+    @patch('index.read_config')
+    def test_handle_dyndns_update_use_x_forwarded_for(self, mock_read_config):
+        """Test DynDNS update using X-Forwarded-For header (CloudFront scenario)"""
+        # Mock config
+        mock_read_config.return_value = {
+            'shared_secret': 'SECRET123',
+            'route_53_zone_id': 'Z123456',
+            'route_53_record_ttl': 60
+        }
+        
+        credentials = "home.example.com:SECRET123"
+        encoded = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+        
+        with patch('index.route53_client') as mock_route53:
+            # Mock Route53 to return same IP as client (from X-Forwarded-For)
+            mock_route53.return_value = {
+                'return_status': 'success',
+                'return_message': '203.0.113.1'
+            }
+            
+            event = {
+                'queryStringParameters': {
+                    'hostname': 'home.example.com'
+                    # myip not provided - should use X-Forwarded-For
+                },
+                'headers': {
+                    'authorization': f'Basic {encoded}',
+                    'x-forwarded-for': '203.0.113.1, 198.51.100.2'  # Client IP, proxy IP
+                },
+                'requestContext': {
+                    'http': {
+                        'sourceIp': '130.176.220.5'  # CloudFront IP - should be ignored
+                    }
+                }
+            }
+            
+            response = index.handle_dyndns_update(event)
+            
+            self.assertEqual(response['statusCode'], 200)
+            self.assertEqual(response['body'], 'nochg 203.0.113.1')
+    
     def test_handle_dyndns_update_badauth_no_header(self):
         """Test DynDNS update with no auth header (badauth response)"""
         event = {
@@ -544,6 +585,109 @@ class TestLambdaHandlerRouting(unittest.TestCase):
         
         mock_set_mode.assert_called_once()
         self.assertEqual(response['statusCode'], 200)
+
+
+class TestGetSourceIP(unittest.TestCase):
+    """Test get_source_ip function for CloudFront and direct access scenarios"""
+    
+    def test_get_source_ip_from_x_forwarded_for_single_ip(self):
+        """Test extracting client IP from X-Forwarded-For with single IP"""
+        event = {
+            'headers': {
+                'x-forwarded-for': '203.0.113.1'
+            },
+            'requestContext': {
+                'http': {
+                    'sourceIp': '130.176.220.5'  # CloudFront IP
+                }
+            }
+        }
+        
+        ip = index.get_source_ip(event)
+        
+        self.assertEqual(ip, '203.0.113.1')
+    
+    def test_get_source_ip_from_x_forwarded_for_multiple_ips(self):
+        """Test extracting client IP from X-Forwarded-For with multiple IPs (comma-separated)"""
+        event = {
+            'headers': {
+                'x-forwarded-for': '203.0.113.1, 198.51.100.2, 192.0.2.3'
+            },
+            'requestContext': {
+                'http': {
+                    'sourceIp': '130.176.220.5'  # CloudFront IP
+                }
+            }
+        }
+        
+        ip = index.get_source_ip(event)
+        
+        # Should extract the first IP (client IP)
+        self.assertEqual(ip, '203.0.113.1')
+    
+    def test_get_source_ip_from_x_forwarded_for_uppercase(self):
+        """Test extracting IP from X-Forwarded-For header with uppercase"""
+        event = {
+            'headers': {
+                'X-Forwarded-For': '203.0.113.1'
+            },
+            'requestContext': {
+                'http': {
+                    'sourceIp': '130.176.220.5'
+                }
+            }
+        }
+        
+        ip = index.get_source_ip(event)
+        
+        self.assertEqual(ip, '203.0.113.1')
+    
+    def test_get_source_ip_fallback_to_source_ip(self):
+        """Test fallback to sourceIp when X-Forwarded-For is absent (direct Lambda URL)"""
+        event = {
+            'headers': {},
+            'requestContext': {
+                'http': {
+                    'sourceIp': '198.51.100.10'
+                }
+            }
+        }
+        
+        ip = index.get_source_ip(event)
+        
+        self.assertEqual(ip, '198.51.100.10')
+    
+    def test_get_source_ip_empty_headers(self):
+        """Test fallback when headers dict is empty"""
+        event = {
+            'requestContext': {
+                'http': {
+                    'sourceIp': '198.51.100.10'
+                }
+            }
+        }
+        
+        ip = index.get_source_ip(event)
+        
+        self.assertEqual(ip, '198.51.100.10')
+    
+    def test_get_source_ip_with_spaces_in_forwarded_for(self):
+        """Test handling X-Forwarded-For with extra spaces"""
+        event = {
+            'headers': {
+                'x-forwarded-for': '  203.0.113.1  ,  198.51.100.2  '
+            },
+            'requestContext': {
+                'http': {
+                    'sourceIp': '130.176.220.5'
+                }
+            }
+        }
+        
+        ip = index.get_source_ip(event)
+        
+        # Should strip whitespace
+        self.assertEqual(ip, '203.0.113.1')
 
 
 if __name__ == '__main__':
