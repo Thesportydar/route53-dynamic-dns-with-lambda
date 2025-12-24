@@ -38,6 +38,45 @@ def parse_basic_auth(auth_header):
         return None, None
 
 
+def validate_token(token, hostname):
+    """
+    Validate temporary token from DynamoDB.
+    Returns True if token is valid for the given hostname and not expired.
+    """
+    try:
+        dynamodb = boto3.client("dynamodb")
+        tokens_table_name = os.environ.get("TOKENS_TABLE_NAME")
+        
+        if not tokens_table_name:
+            return False
+        
+        response = dynamodb.get_item(
+            TableName=tokens_table_name,
+            Key={'token': {'S': token}}
+        )
+        
+        if 'Item' not in response:
+            return False
+        
+        item = response['Item']
+        
+        # Verify token is for this hostname
+        token_hostname = item.get('hostname', {}).get('S', '')
+        if token_hostname != hostname:
+            return False
+        
+        # Verify token hasn't expired (DynamoDB TTL cleanup is eventual, so check here too)
+        import time
+        ttl = int(item.get('ttl', {}).get('N', 0))
+        if ttl < int(time.time()):
+            return False
+        
+        return True
+    except Exception as e:
+        print(f"Token validation error: {e}")
+        return False
+
+
 '''
 Validate hostname format (FQDN).
 Pattern explanation:
@@ -253,6 +292,7 @@ def handle_dyndns_update(event):
     query_params = event.get('queryStringParameters', {}) or {}
     hostname = query_params.get('hostname', '')
     myip = query_params.get('myip', '')
+    token = query_params.get('token', '')  # NEW: Extract token parameter
     
     # If myip not provided, use source IP (with X-Forwarded-For support)
     if not myip:
@@ -273,47 +313,67 @@ def handle_dyndns_update(event):
             'body': 'notfqdn'
         }
     
-    # Parse Basic Authentication
-    headers = event.get('headers', {})
-    # Check both lowercase and uppercase as different clients may send either format
-    # AWS Lambda Function URLs normalize headers to lowercase, but checking both for robustness
-    auth_header = headers.get('authorization') or headers.get('Authorization')
-    username, password = parse_basic_auth(auth_header)
-    
-    # Validate authentication
-    if not username or not password:
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'text/plain'},
-            'body': 'badauth'
-        }
-    
-    # Username should match hostname
-    if username != hostname:
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'text/plain'},
-            'body': 'badauth'
-        }
-    
-    # Try to read the config from DynamoDB
-    try:
-        full_config = read_config(hostname)
-    except Exception:
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'text/plain'},
-            'body': 'nohost'
-        }
-    
-    # Verify password matches shared_secret
-    shared_secret = full_config.get('shared_secret', '')
-    if password != shared_secret:
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'text/plain'},
-            'body': 'badauth'
-        }
+    # AUTHENTICATION: Support two methods
+    # Method 1: Token authentication (for browsers)
+    if token:
+        # Try to read the config from DynamoDB
+        try:
+            full_config = read_config(hostname)
+        except Exception:
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': 'nohost'
+            }
+        
+        # Validate token
+        if not validate_token(token, hostname):
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': 'badauth'
+            }
+    # Method 2: HTTP Basic Auth (for routers/curl)
+    else:
+        # Parse Basic Authentication
+        headers = event.get('headers', {})
+        auth_header = headers.get('authorization') or headers.get('Authorization')
+        username, password = parse_basic_auth(auth_header)
+        
+        # Validate authentication
+        if not username or not password:
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': 'badauth'
+            }
+        
+        # Username should match hostname
+        if username != hostname:
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': 'badauth'
+            }
+        
+        # Try to read the config from DynamoDB
+        try:
+            full_config = read_config(hostname)
+        except Exception:
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': 'nohost'
+            }
+        
+        # Verify password matches shared_secret
+        shared_secret = full_config.get('shared_secret', '')
+        if password != shared_secret:
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': 'badauth'
+            }
     
     # Get Route53 configuration
     route_53_zone_id = full_config['route_53_zone_id']

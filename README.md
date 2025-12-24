@@ -290,3 +290,58 @@ This solution works with any device supporting the DynDNS protocol:
 - UniFi Security Gateway
 
 For detailed configuration guides for specific devices, see [DYNDNS.md](DYNDNS.md)
+
+## Authentication Methods
+
+This DDNS solution supports three authentication methods:
+
+### 1. HTTP Basic Auth (for routers and scripts)
+
+Use this for automatic updates from routers, clients, or scripts:
+
+```bash
+curl "http://your-cloudfront-domain.com/nic/update?hostname=yourdomain.com" \
+  -u "yourdomain.com:your-shared-secret"
+```
+
+**Router configuration:**
+- Service Provider: dyndns-custom or no-ip
+- Host: your-cloudfront-domain.com
+- Port: 80
+- Username: yourdomain.com
+- Password: your-shared-secret
+
+### 2. Token Auth (for browsers)
+
+Modern browsers block `user:pass@host` URLs for security. Use temporary tokens instead:
+
+**Generate a token:**
+```bash
+# Token valid for 5 minutes (default)
+python generate_token.py yourdomain.com
+
+# Token valid for 24 hours
+python generate_token.py yourdomain.com 86400
+
+# Token valid for 3 days
+python generate_token.py yourdomain.com 259200
+```
+
+**Share the generated link via WhatsApp, SMS, or email:**
+```
+http://your-cloudfront-domain.com/nic/update?hostname=yourdomain.com&token=abc123...
+```
+
+One click updates the DNS record - no authentication popup!
+
+**Use case:** Share with family members to update IP when they're at a location with a dynamic IP (e.g., vacation home, remote camera).
+
+**Security notes:**
+- Tokens are single-hostname (can only update the specified domain)
+- Tokens expire automatically after TTL
+- DynamoDB auto-deletes expired tokens (no cleanup needed)
+- Default TTL: 300 seconds (5 minutes)
+
+### 3. Hash-based Auth (legacy)
+
+The original authentication method using SHA256 hashes. See `setdns.py` for usage.
