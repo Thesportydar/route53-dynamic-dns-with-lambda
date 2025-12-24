@@ -9,6 +9,7 @@ import hashlib
 import boto3
 import os
 import base64
+import time
 from botocore.exceptions import ClientError
 
 '''
@@ -66,7 +67,6 @@ def validate_token(token, hostname):
             return False
         
         # Verify token hasn't expired (DynamoDB TTL cleanup is eventual, so check here too)
-        import time
         ttl = int(item.get('ttl', {}).get('N', 0))
         if ttl < int(time.time()):
             return False
@@ -316,7 +316,7 @@ def handle_dyndns_update(event):
     # AUTHENTICATION: Support two methods
     # Method 1: Token authentication (for browsers)
     if token:
-        # Try to read the config from DynamoDB
+        # Try to read the config from DynamoDB first to give proper error
         try:
             full_config = read_config(hostname)
         except Exception:
