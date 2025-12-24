@@ -77,7 +77,7 @@ def validate_token(token, hostname):
         return False
 
 
-'''
+r'''
 Validate hostname format (FQDN).
 Pattern explanation:
 - ^[a-zA-Z0-9]: Must start with alphanumeric
