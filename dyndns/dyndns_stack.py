@@ -24,6 +24,18 @@ class DyndnsStack(cdk.Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
         )
         
+        # Token table for browser-based authentication
+        tokens_table = dynamodb.Table(
+            self, "tokens-table",
+            partition_key=dynamodb.Attribute(
+                name="token",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+            time_to_live_attribute="ttl"  # Auto-cleanup expired tokens
+        )
+        
         #Create Lambda role
         fn_role = iam.Role(self, "dyndns_fn_role",
             assumed_by = iam.ServicePrincipal("lambda.amazonaws.com"),
@@ -68,7 +80,8 @@ class DyndnsStack(cdk.Stack):
             timeout=cdk.Duration.seconds(8),
             #Provide DynammoDB table name as enviroment variable
             environment={
-                "ddns_config_table":table.table_name
+                "ddns_config_table":table.table_name,
+                "TOKENS_TABLE_NAME":tokens_table.table_name
             }
         )            
 
@@ -84,6 +97,9 @@ class DyndnsStack(cdk.Stack):
 
         #Give lambda permissions to read DynamoDB table
         table.grant_read_data(fn)
+        
+        # Grant Lambda read access to tokens table
+        tokens_table.grant_read_data(fn)
         
         # Extract the domain from the Lambda Function URL (remove https:// and trailing /)
         lambda_url_domain = cdk.Fn.select(2, cdk.Fn.split("/", lambda_fn.url))
